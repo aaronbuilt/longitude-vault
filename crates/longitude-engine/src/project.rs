@@ -8,6 +8,7 @@ use toml::value::Datetime;
 
 use crate::model::{Money, Scenario, VaultModel};
 use crate::month::Month;
+use crate::strategy::{Strategy, KNOWN_STRATEGIES};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -26,12 +27,52 @@ pub enum EngineError {
     #[error("the vault has no scenarios to project")]
     NoScenarios,
     #[error(
+        "unknown withdrawal strategy {slug:?} — the v0.1 registry is {}; \
+         the engine refuses rather than silently substitutes (engine spec §7.2)",
+        KNOWN_STRATEGIES.join(", ")
+    )]
+    UnknownStrategy { slug: String },
+    #[error(
+        "simple mode needs `strategy` in the scenario's [withdrawal] table — \
+         the strategy drives spending there (engine spec §7.2); \
+         the v0.1 registry is {}", KNOWN_STRATEGIES.join(", ")
+    )]
+    MissingStrategy,
+    #[error("withdrawal strategy {slug:?} needs [withdrawal].rate")]
+    MissingRate { slug: String },
+    #[error(
         "no scenario selected: none is targeted and the vault has several — \
          pass --scenario <id>; available: {}", available.join(", ")
     )]
     NoTargetedScenario { available: Vec<String> },
     #[error("{0}")]
     Value(String),
+}
+
+/// How spending is determined (engine spec §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendingMode {
+    /// Demand-driven: the plan defines spending
+    /// (profile.annual_spending + extra_monthly); withdrawals are
+    /// expenses − income. The strategy slug changes nothing here (§7.1).
+    Plan,
+    /// Simple mode: the scenario's [withdrawal] strategy drives spending
+    /// directly, recomputed at each simulation-year boundary (§7.2).
+    Simple,
+}
+
+/// What the strategy did over the horizon (simple mode only).
+#[derive(Debug, Clone)]
+pub struct StrategyOutcome {
+    pub slug: &'static str,
+    pub rate: Option<f64>,
+    pub floor: Option<f64>,
+    pub ceiling: Option<f64>,
+    /// Annual spending set at the first year boundary.
+    pub first_year: f64,
+    /// Extremes across all simulation years.
+    pub min_year: f64,
+    pub max_year: f64,
 }
 
 /// One projected calendar year (partial years at the edges included).
@@ -58,7 +99,10 @@ pub struct Projection {
     /// Latest snapshot date the valuation rests on, if any snapshots exist.
     pub valuation_as_of: Option<Datetime>,
     /// Annual recurring spending (profile.annual_spending + 12 × extra_monthly).
-    pub annual_spending: Decimal,
+    /// `None` in simple mode, where the strategy sets spending year by year.
+    pub annual_spending: Option<Decimal>,
+    /// Present in simple mode: which strategy ran and what it withdrew.
+    pub strategy: Option<StrategyOutcome>,
     /// Σ weight × expected_return, real, annualized.
     pub blended_return: f64,
     /// SWR used for the FI number: scenario [withdrawal].rate, else profile.swr.
@@ -215,32 +259,47 @@ pub fn project(
     model: &VaultModel,
     scenario: &Scenario,
     now: Month,
+    mode: SpendingMode,
 ) -> Result<Projection, EngineError> {
     let mut warnings = Vec::new();
 
     // ---- t₀ (the one decimal → f64 crossing) -------------------------------
     let (t0_investable, valuation_as_of) = value_t0(model, now, &mut warnings)?;
 
-    // ---- spending -----------------------------------------------------------
-    let base_spend = model
-        .profile
-        .annual_spending
-        .as_ref()
-        .ok_or(EngineError::MissingSpending)
-        .and_then(|m| money_in_base(m, &model.base_currency, "profile.annual_spending"))?;
-    let extra_monthly = scenario
-        .expenses
-        .extra_monthly
-        .as_ref()
-        .map(|m| money_in_base(m, &model.base_currency, "expenses.extra_monthly"))
-        .transpose()?
-        .unwrap_or(Decimal::ZERO);
-    let annual_spending = base_spend + extra_monthly * Decimal::from(12);
-    warnings.push(
-        "spending comes from profile.annual_spending — pricing residency blocks \
-         from cost-of-living data is outside the open projection"
-            .to_string(),
-    );
+    // ---- spending (§7): the plan's figure, or the strategy registry ---------
+    let annual_spending = match mode {
+        SpendingMode::Plan => {
+            let base_spend = model
+                .profile
+                .annual_spending
+                .as_ref()
+                .ok_or(EngineError::MissingSpending)
+                .and_then(|m| money_in_base(m, &model.base_currency, "profile.annual_spending"))?;
+            let extra_monthly = scenario
+                .expenses
+                .extra_monthly
+                .as_ref()
+                .map(|m| money_in_base(m, &model.base_currency, "expenses.extra_monthly"))
+                .transpose()?
+                .unwrap_or(Decimal::ZERO);
+            warnings.push(
+                "spending comes from profile.annual_spending — pricing residency blocks \
+                 from cost-of-living data is outside the open projection"
+                    .to_string(),
+            );
+            Some(base_spend + extra_monthly * Decimal::from(12))
+        }
+        SpendingMode::Simple => None,
+    };
+    let strategy = match mode {
+        SpendingMode::Simple => Some(Strategy::from_withdrawal(
+            &scenario.withdrawal,
+            |m, what| {
+                money_in_base(m, &model.base_currency, what).map(|d| d.to_f64().unwrap_or(0.0))
+            },
+        )?),
+        SpendingMode::Plan => None,
+    };
 
     // ---- blended deterministic return (§6.2) --------------------------------
     let mut weight_sum = 0.0;
@@ -275,25 +334,31 @@ pub fn project(
     };
     let monthly_return = (1.0 + blended_return).powf(1.0 / 12.0) - 1.0;
 
-    // ---- FI number & Score (§14.1/§14.2) ------------------------------------
-    let swr = match (&scenario.withdrawal.rate, &model.profile.swr) {
-        (Some(r), _) => Some(parse_decimal(r, "withdrawal.rate")?),
-        (None, Some(r)) => Some(parse_decimal(r, "profile.swr")?),
-        (None, None) => {
-            warnings.push(
-                "no [withdrawal].rate and no profile.swr — FI number and \
-                 Longitude Score unavailable"
-                    .to_string(),
-            );
-            None
-        }
+    // ---- FI number & Score (§14.1/§14.2) — plan-driven concepts; simple
+    // mode has no steady-state spend to divide by the SWR ----------------------
+    let swr = match mode {
+        SpendingMode::Simple => None,
+        SpendingMode::Plan => match (&scenario.withdrawal.rate, &model.profile.swr) {
+            (Some(r), _) => Some(parse_decimal(r, "withdrawal.rate")?),
+            (None, Some(r)) => Some(parse_decimal(r, "profile.swr")?),
+            (None, None) => {
+                warnings.push(
+                    "no [withdrawal].rate and no profile.swr — FI number and \
+                     Longitude Score unavailable"
+                        .to_string(),
+                );
+                None
+            }
+        },
     };
-    let fi_number = swr.and_then(|swr| {
-        if swr > Decimal::ZERO {
-            Some(annual_spending / swr)
-        } else {
-            None
-        }
+    let fi_number = annual_spending.and_then(|spend| {
+        swr.and_then(|swr| {
+            if swr > Decimal::ZERO {
+                Some(spend / swr)
+            } else {
+                None
+            }
+        })
     });
     let score = fi_number.map(|fi| {
         (t0_investable / fi)
@@ -346,19 +411,63 @@ pub fn project(
         .unwrap_or(now);
     let horizon_years = scenario.timeline.horizon_years.unwrap_or(50).min(120);
     let months = horizon_years * 12;
-    let monthly_expense = (annual_spending / Decimal::from(12))
-        .to_f64()
+    let plan_monthly_expense = annual_spending
+        .map(|spend| (spend / Decimal::from(12)).to_f64().unwrap_or(0.0))
         .unwrap_or(0.0);
     let fi_target = fi_number.and_then(|d| d.to_f64());
 
-    let mut portfolio = t0_investable.to_f64().unwrap_or(0.0);
+    let t0 = t0_investable.to_f64().unwrap_or(0.0);
+    let mut portfolio = t0;
     let mut failed = false;
     let mut depletion_month = None;
     let mut fi_month = None;
     let mut years: Vec<YearRow> = Vec::new();
 
+    // Simple mode: the strategy sets annual spending at each simulation-year
+    // boundary (§7.2); within a year it is spent evenly by month.
+    let mut annual_spend = 0.0;
+    let mut outcome = strategy.as_ref().map(|s| StrategyOutcome {
+        slug: s.slug(),
+        rate: match s {
+            Strategy::ConstantDollar { rate }
+            | Strategy::FixedPercentage { rate }
+            | Strategy::PercentWithBounds { rate, .. } => Some(*rate),
+            Strategy::Vpw => None,
+        },
+        floor: match s {
+            Strategy::PercentWithBounds { floor, .. } => *floor,
+            _ => None,
+        },
+        ceiling: match s {
+            Strategy::PercentWithBounds { ceiling, .. } => *ceiling,
+            _ => None,
+        },
+        first_year: 0.0,
+        min_year: f64::INFINITY,
+        max_year: 0.0,
+    });
+
     for i in 0..months {
         let m = start.plus_months(i as i32);
+
+        if let Some(s) = &strategy {
+            if (i % 12) == 0 {
+                let year = i / 12;
+                annual_spend = s.annual_spend(year, portfolio, t0, horizon_years, blended_return);
+                if let Some(o) = &mut outcome {
+                    if year == 0 {
+                        o.first_year = annual_spend;
+                    }
+                    o.min_year = o.min_year.min(annual_spend);
+                    o.max_year = o.max_year.max(annual_spend);
+                }
+            }
+        }
+        let monthly_expense = if strategy.is_some() {
+            annual_spend / 12.0
+        } else {
+            plan_monthly_expense
+        };
 
         // 1. income  2. expenses  3. net cashflow
         let income: f64 = streams.iter().map(|s| s.at(m, start)).sum();
@@ -408,6 +517,11 @@ pub fn project(
     }
 
     let end_balance = portfolio;
+    if let Some(o) = &mut outcome {
+        if !o.min_year.is_finite() {
+            o.min_year = 0.0; // zero-length horizon: no year boundary ran
+        }
+    }
     Ok(Projection {
         scenario_id: scenario.id.clone(),
         scenario_name: scenario.name.clone(),
@@ -417,6 +531,7 @@ pub fn project(
         t0_investable,
         valuation_as_of,
         annual_spending,
+        strategy: outcome,
         blended_return,
         swr,
         fi_number,

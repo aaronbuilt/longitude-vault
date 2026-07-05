@@ -89,7 +89,11 @@ pub struct Portfolio {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct Withdrawal {
+    pub strategy: Option<String>,
     pub rate: Option<String>,
+    /// percent-with-bounds only: annual clamp, real terms (§4.5).
+    pub floor: Option<Money>,
+    pub ceiling: Option<Money>,
 }
 
 #[derive(Debug, Deserialize)]

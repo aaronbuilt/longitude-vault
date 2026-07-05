@@ -1,10 +1,12 @@
 # The Longitude Vault Format — Specification v0.1 (draft)
 
-*Status: draft, rev 4 · 2026-07-04 — rev 4 is the security-hardening and
-publication pass: untrusted-vault reading rules (§5.4), an explicit statement
-of what age does and does not provide (§6.5), key rotation (§6.6), a
-self-contained threat model (§7), and removal of references to internal
-Longitude documents.*
+*Status: draft, rev 5 · 2026-07-05 — rev 5 documents the optional
+`floor`/`ceiling` Money fields on `[withdrawal]` (§4.5), the annual clamp
+used by the `percent-with-bounds` withdrawal strategy. Rev 4 (2026-07-04)
+was the security-hardening and publication pass: untrusted-vault reading
+rules (§5.4), an explicit statement of what age does and does not provide
+(§6.5), key rotation (§6.6), a self-contained threat model (§7), and removal
+of references to internal Longitude documents.*
 *This is the open, published specification of the Longitude vault format. The
 reference CLI implements it.*
 
@@ -320,6 +322,9 @@ strategy = "fixed-percentage"       # engine strategy registry; drives spending 
                                     # Meridian simulation is demand-driven
 rate = "0.040"                      # doubles as this scenario's SWR for the
                                     # FI number / Longitude Score
+# percent-with-bounds only — annual clamp on strategy spending, real terms:
+# floor   = { amount = "30000", currency = "USD" }   # Money, optional
+# ceiling = { amount = "80000", currency = "USD" }   # Money, optional
 
 [tax]
 # Citizenship-driven flags default from profile.passports; scenario may override.

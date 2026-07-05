@@ -45,6 +45,10 @@ enum Command {
         /// Valuation month as YYYY-MM (default: the current month)
         #[arg(long)]
         now: Option<String>,
+        /// Simple mode: the scenario's [withdrawal] strategy drives spending
+        /// (ficalc-style) instead of the plan's expenses (engine spec §7.2)
+        #[arg(long)]
+        simple: bool,
         /// Print the year-by-year table
         #[arg(long)]
         table: bool,
@@ -142,6 +146,7 @@ fn main() -> ExitCode {
             identity,
             scenario,
             now,
+            simple,
             table,
             max_size_mib,
         } => cmd_project(
@@ -149,6 +154,7 @@ fn main() -> ExitCode {
             &identity,
             scenario.as_deref(),
             now.as_deref(),
+            simple,
             table,
             max_size_mib,
         ),
@@ -316,6 +322,7 @@ fn cmd_project(
     identity_paths: &[PathBuf],
     scenario_id: Option<&str>,
     now: Option<&str>,
+    simple: bool,
     table: bool,
     max_size_mib: u64,
 ) -> Result<ExitCode> {
@@ -330,9 +337,14 @@ fn cmd_project(
         Some(s) => parse_month(s)?,
         None => current_month(),
     };
+    let spending_mode = if simple {
+        longitude_engine::SpendingMode::Simple
+    } else {
+        longitude_engine::SpendingMode::Plan
+    };
     let model = longitude_engine::extract(&vault)?;
     let scenario = model.select_scenario(scenario_id)?;
-    let projection = longitude_engine::project(&model, scenario, now)?;
+    let projection = longitude_engine::project(&model, scenario, now, spending_mode)?;
     print_projection(&projection, &model.base_currency, table);
     Ok(ExitCode::SUCCESS)
 }
@@ -398,10 +410,39 @@ fn print_projection(p: &longitude_engine::Projection, currency: &str, table: boo
         "t₀ investable    {}{as_of}",
         fmt_money(p.t0_investable.to_f64().unwrap_or(0.0), currency)
     );
-    println!(
-        "spending         {} / yr",
-        fmt_money(p.annual_spending.to_f64().unwrap_or(0.0), currency)
-    );
+    match (&p.annual_spending, &p.strategy) {
+        (Some(spend), _) => println!(
+            "spending         {} / yr",
+            fmt_money(spend.to_f64().unwrap_or(0.0), currency)
+        ),
+        (None, Some(s)) => {
+            let params = match (s.rate, s.floor, s.ceiling) {
+                (Some(r), None, None) => format!(" @ {:.1}%", r * 100.0),
+                (Some(r), floor, ceiling) => format!(
+                    " @ {:.1}% in [{} – {}]",
+                    r * 100.0,
+                    floor
+                        .map(|f| fmt_money(f, currency))
+                        .unwrap_or_else(|| "0".into()),
+                    ceiling
+                        .map(|c| fmt_money(c, currency))
+                        .unwrap_or_else(|| "∞".into()),
+                ),
+                (None, _, _) => String::new(),
+            };
+            println!("spending         strategy-driven: {}{params}", s.slug);
+            println!(
+                "  first year     {} / yr",
+                fmt_money(s.first_year, currency)
+            );
+            println!(
+                "  across years   {} – {} / yr",
+                fmt_money(s.min_year, currency),
+                fmt_money(s.max_year, currency)
+            );
+        }
+        (None, None) => {}
+    }
     println!(
         "real return      {:.1}% / yr (blended)",
         p.blended_return * 100.0
@@ -417,6 +458,9 @@ fn print_projection(p: &longitude_engine::Projection, currency: &str, table: boo
                 "Longitude Score  {:.1}%  (investable ÷ FI number)",
                 score * 100.0
             );
+        }
+        _ if p.strategy.is_some() => {
+            println!("Longitude Score  (a plan concept — not computed in simple mode)")
         }
         _ => println!("SWR              (unavailable — no rate; Score skipped)"),
     }

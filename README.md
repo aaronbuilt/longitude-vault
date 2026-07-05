@@ -52,13 +52,17 @@ longitude vault export my.lonvault -o handoff.lon   # passphrase-only (§6.4)
 
 longitude project my.lonvault --table               # deterministic projection
 longitude project vault.lon -i identity.txt         # works on containers too
+longitude project my.lonvault --simple              # strategy-driven spending
 ```
 
 `longitude project` runs the **open engine core**: a deterministic
 single-scenario projection in real (inflation-adjusted) terms — investable
 assets from your snapshots, demand-driven withdrawals (spending − income,
 month by month), blended expected returns, FI date, depletion date, and the
-Longitude Score. Deliberately out of scope here: Monte Carlo, cost-of-living
+Longitude Score. With `--simple` the scenario's `[withdrawal]` strategy
+drives spending instead (ficalc-style): the v0.1 registry is
+`constant-dollar`, `fixed-percentage`, `percent-with-bounds`, and `vpw`.
+Deliberately out of scope here: Monte Carlo, cost-of-living
 data, tax, and visa modeling — that's the product's engine, built on this
 core. Estimates, not advice.
 
@@ -68,7 +72,7 @@ data-liberation guarantee, continuously tested.
 
 ## Status
 
-Spec: draft **v0.1 rev 4** (2026-07-04). Reference implementation:
+Spec: draft **v0.1 rev 5** (2026-07-05). Reference implementation:
 **v0.1.0** — validation, both physical forms, §5.4 hardening, conformance
 fixtures. The format is young and feedback is welcome — open an issue for
 anything from a typo to a hole in the threat model (§5.4/§6.5 of the spec

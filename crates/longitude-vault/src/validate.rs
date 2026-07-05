@@ -919,6 +919,8 @@ fn validate_scenario(doc: &str, stem: &str, v: &Value, targeted: &mut Vec<String
 
     if let Some(withdrawal) = t.get("withdrawal").and_then(Value::as_table) {
         check_decimal(withdrawal, "rate", doc, false, r);
+        check_money(withdrawal, "floor", doc, false, r);
+        check_money(withdrawal, "ceiling", doc, false, r);
     }
 }
 

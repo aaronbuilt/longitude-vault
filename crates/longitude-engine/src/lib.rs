@@ -1,8 +1,9 @@
 //! Open engine core: the deterministic single-scenario projection.
 //!
 //! This is the open slice of the Longitude engine — current-state valuation,
-//! the monthly loop, income streams, deterministic portfolio returns, and the
-//! deterministic outputs (FI date, depletion, Longitude Score). Monte Carlo,
+//! the monthly loop, income streams, deterministic portfolio returns, the
+//! withdrawal-strategy registry (simple mode), and the deterministic outputs
+//! (FI date, depletion, Longitude Score). Monte Carlo,
 //! cost-of-living blending from data bundles, tax, and visa feasibility are
 //! engine territory outside this crate.
 //!
@@ -18,7 +19,9 @@
 pub mod model;
 pub mod month;
 pub mod project;
+pub mod strategy;
 
 pub use model::{extract, Scenario, VaultModel};
 pub use month::Month;
-pub use project::{project, EngineError, Projection, YearRow};
+pub use project::{project, EngineError, Projection, SpendingMode, StrategyOutcome, YearRow};
+pub use strategy::{Strategy, KNOWN_STRATEGIES};

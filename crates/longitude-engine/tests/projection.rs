@@ -11,7 +11,7 @@ use longitude_engine::model::{
     Account, Allocation, Expenses, Income, Money, Portfolio, Profile, Scenario, Timeline,
     VaultModel, Withdrawal,
 };
-use longitude_engine::{extract, project, Month};
+use longitude_engine::{extract, project, EngineError, Month, SpendingMode};
 use longitude_vault::RawVault;
 
 fn demo_model() -> VaultModel {
@@ -27,14 +27,14 @@ fn demo_vault_golden_numbers() {
     assert_eq!(scenario.id, "half-life-krakow-tokyo");
 
     let now = Month::from_ym(2026, 7);
-    let p = project(&model, scenario, now).unwrap();
+    let p = project(&model, scenario, now, SpendingMode::Plan).unwrap();
 
     // t₀ (§2.3): schwab 412,345.67 + cold-storage 101,250 (latest snapshot,
     // 2026-06-30) − unsecured mortgage 182,000. Real estate: none.
     assert_eq!(p.t0_investable, Decimal::from_str("331595.67").unwrap());
 
     // spending: profile 60,000 + 12 × 300 extra_monthly
-    assert_eq!(p.annual_spending, Decimal::from(63_600));
+    assert_eq!(p.annual_spending, Some(Decimal::from(63_600)));
 
     // FI number (§14.1): 63,600 / 0.040
     assert_eq!(p.fi_number, Some(Decimal::from(1_590_000)));
@@ -75,8 +75,20 @@ fn demo_vault_golden_numbers() {
 fn projection_is_deterministic() {
     let model = demo_model();
     let scenario = model.select_scenario(None).unwrap();
-    let a = project(&model, scenario, Month::from_ym(2026, 7)).unwrap();
-    let b = project(&model, scenario, Month::from_ym(2026, 7)).unwrap();
+    let a = project(
+        &model,
+        scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
+    let b = project(
+        &model,
+        scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
 }
 
@@ -133,7 +145,13 @@ fn zero_return_depletion_is_exact() {
     // 10,000 at t₀, 12,000/yr spending, 0% return: months 0–9 are funded
     // exactly; the 11th month (index 10) cannot be met.
     let (model, scenario) = tiny_model("10000", "12000");
-    let p = project(&model, &scenario, Month::from_ym(2026, 7)).unwrap();
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
     assert!(p.failed);
     assert_eq!(
         p.depletion_month,
@@ -147,8 +165,8 @@ fn more_assets_never_hurt() {
     let (poor_model, scenario) = tiny_model("100000", "12000");
     let (rich_model, _) = tiny_model("400000", "12000");
     let now = Month::from_ym(2026, 7);
-    let poor = project(&poor_model, &scenario, now).unwrap();
-    let rich = project(&rich_model, &scenario, now).unwrap();
+    let poor = project(&poor_model, &scenario, now, SpendingMode::Plan).unwrap();
+    let rich = project(&rich_model, &scenario, now, SpendingMode::Plan).unwrap();
     assert!(rich.score.unwrap() > poor.score.unwrap());
     // depletion, if both deplete, comes no earlier for the richer start
     if let (Some(p), Some(r)) = (poor.depletion_month, rich.depletion_month) {
@@ -171,7 +189,13 @@ fn income_rescue_recovers_a_failed_path() {
         to: None,
         growth: None,
     }];
-    let p = project(&model, &scenario, Month::from_ym(2026, 7)).unwrap();
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
     assert!(p.failed, "should deplete before the pension starts");
     assert!(p.depletion_month.unwrap() < Month::from_ym(2030, 1));
     assert!(p.recovered, "pension surplus should rebuild the portfolio");
@@ -199,7 +223,13 @@ fn fi_date_reached_with_surplus_and_returns() {
             expected_return: Some("0.050".to_string()),
         }],
     };
-    let p = project(&model, &scenario, Month::from_ym(2026, 7)).unwrap();
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
     assert_eq!(p.fi_number, Some(Decimal::from(300_000)));
     assert!(!p.failed);
     let fi = p.fi_month.expect("FI should be reached");
@@ -237,11 +267,272 @@ fn secured_liability_stays_out_of_investable() {
             value: money("250000"),
         });
     let now = Month::from_ym(2026, 7);
-    let secured = project(&model, &scenario, now).unwrap();
+    let secured = project(&model, &scenario, now, SpendingMode::Plan).unwrap();
     assert_eq!(secured.t0_investable, Decimal::from(100_000));
 
     model.accounts.last_mut().unwrap().secured_by = None;
-    let unsecured = project(&model, &scenario, now).unwrap();
+    let unsecured = project(&model, &scenario, now, SpendingMode::Plan).unwrap();
     assert_eq!(unsecured.t0_investable, Decimal::from(-150_000));
     assert_eq!(unsecured.score, Some(0.0), "Score floors at 0");
+}
+
+// ---- simple mode: the §7.2 strategy registry --------------------------------
+
+fn simple_scenario(strategy: &str, rate: Option<&str>, horizon: u32) -> Scenario {
+    Scenario {
+        id: "simple".to_string(),
+        name: "Simple".to_string(),
+        targeted: true,
+        timeline: Timeline {
+            start: Some("2027-01-01".parse().unwrap()),
+            horizon_years: Some(horizon),
+        },
+        expenses: Expenses::default(),
+        income: vec![],
+        portfolio: Portfolio::default(),
+        withdrawal: Withdrawal {
+            strategy: Some(strategy.to_string()),
+            rate: rate.map(|r| r.to_string()),
+            floor: None,
+            ceiling: None,
+        },
+    }
+}
+
+#[test]
+fn constant_dollar_zero_return_runs_exactly_25_years() {
+    // The 4%-rule shape at 0% real return spends 1,000,000 in exactly
+    // 25 years: 40,000/yr fixed in real terms (± one month of fp drift).
+    let (model, _) = tiny_model("1000000", "0");
+    let scenario = simple_scenario("constant-dollar", Some("0.040"), 40);
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!(p.failed);
+    let depletion = p.depletion_month.unwrap();
+    let start = Month::from_ym(2027, 1);
+    let months = depletion.months_since(start);
+    assert!(
+        (299..=301).contains(&months),
+        "depleted after {months} months"
+    );
+    let o = p.strategy.as_ref().unwrap();
+    assert_eq!(o.slug, "constant-dollar");
+    assert!((o.first_year - 40_000.0).abs() < 1e-9);
+    assert!(
+        (o.min_year - o.max_year).abs() < 1e-9,
+        "fixed in real terms"
+    );
+}
+
+#[test]
+fn fixed_percentage_never_fails() {
+    let (model, _) = tiny_model("1000000", "0");
+    let scenario = simple_scenario("fixed-percentage", Some("0.050"), 60);
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!(!p.failed);
+    assert!(p.end_balance > 0.0);
+    let o = p.strategy.as_ref().unwrap();
+    // 5% of a shrinking portfolio: the first year is the largest withdrawal
+    assert!((o.first_year - 50_000.0).abs() < 1e-9);
+    assert!((o.max_year - o.first_year).abs() < 1e-9);
+    assert!(o.min_year < o.max_year, "income varies");
+}
+
+#[test]
+fn percent_with_bounds_clamps_both_ways() {
+    let (model, _) = tiny_model("1000000", "0");
+
+    // rate says 20,000 but the floor lifts spending to 30,000
+    let mut floored = simple_scenario("percent-with-bounds", Some("0.020"), 30);
+    floored.withdrawal.floor = Some(money("30000"));
+    let p = project(
+        &model,
+        &floored,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!((p.strategy.as_ref().unwrap().first_year - 30_000.0).abs() < 1e-9);
+
+    // rate says 100,000 but the ceiling caps spending at 50,000
+    let mut capped = simple_scenario("percent-with-bounds", Some("0.100"), 30);
+    capped.withdrawal.ceiling = Some(money("50000"));
+    let p = project(
+        &model,
+        &capped,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!((p.strategy.as_ref().unwrap().first_year - 50_000.0).abs() < 1e-9);
+
+    // a floor above the ceiling is refused
+    let mut bad = simple_scenario("percent-with-bounds", Some("0.040"), 30);
+    bad.withdrawal.floor = Some(money("60000"));
+    bad.withdrawal.ceiling = Some(money("50000"));
+    let err = project(&model, &bad, Month::from_ym(2026, 7), SpendingMode::Simple).unwrap_err();
+    assert!(matches!(err, EngineError::Value(_)), "{err}");
+}
+
+#[test]
+fn a_binding_floor_can_fail() {
+    // percent-with-bounds is "never fails" only until the floor binds hard:
+    // 100,000/yr minimum spending from a 500,000 portfolio at 0% return.
+    let (model, _) = tiny_model("500000", "0");
+    let mut scenario = simple_scenario("percent-with-bounds", Some("0.040"), 30);
+    scenario.withdrawal.floor = Some(money("100000"));
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!(p.failed);
+    let depletion = p.depletion_month.unwrap();
+    let months = depletion.months_since(Month::from_ym(2027, 1));
+    assert!(
+        (59..=61).contains(&months),
+        "depleted after {months} months"
+    );
+}
+
+#[test]
+fn vpw_zero_return_spends_evenly_and_depletes_at_horizon() {
+    // At 0% return VPW is straight-line: 1/n of the remainder each year is
+    // the same real amount every year, and the portfolio hits zero exactly
+    // at the horizon — never earlier.
+    let (model, _) = tiny_model("100000", "0");
+    let scenario = simple_scenario("vpw", None, 10);
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    let o = p.strategy.as_ref().unwrap();
+    assert!((o.min_year - 10_000.0).abs() < 1e-6, "min {}", o.min_year);
+    assert!((o.max_year - 10_000.0).abs() < 1e-6, "max {}", o.max_year);
+    assert!(p.end_balance.abs() < 1e-3, "end {}", p.end_balance);
+    // fp drift may or may not trip the failure latch in the very last month;
+    // anything earlier is a real bug
+    if let Some(m) = p.depletion_month {
+        assert!(
+            m.months_since(Month::from_ym(2027, 1)) >= 119,
+            "failed at {m}"
+        );
+    }
+}
+
+#[test]
+fn vpw_first_year_matches_the_annuity_formula() {
+    // 5% expected return over 30 years: rate = 0.05/(1 − 1.05⁻³⁰) ≈ 6.5051%
+    let (model, _) = tiny_model("1000000", "0");
+    let mut scenario = simple_scenario("vpw", None, 30);
+    scenario.portfolio = Portfolio {
+        allocation: vec![Allocation {
+            class: Some("equities-global".to_string()),
+            weight: Some("1.0".to_string()),
+            expected_return: Some("0.050".to_string()),
+        }],
+    };
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    let o = p.strategy.as_ref().unwrap();
+    assert!((o.first_year - 65_051.43).abs() < 1.0, "{}", o.first_year);
+    assert!(!p.failed);
+}
+
+#[test]
+fn unknown_strategy_is_refused_not_substituted() {
+    let (model, _) = tiny_model("1000000", "0");
+    let scenario = simple_scenario("guyton-klinger", Some("0.040"), 30);
+    let err = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::UnknownStrategy { .. }), "{err}");
+
+    let scenario = simple_scenario("constant-dollar", None, 30);
+    let err = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::MissingRate { .. }), "{err}");
+}
+
+#[test]
+fn simple_mode_needs_no_annual_spending() {
+    // A vault with no profile.annual_spending can't run a plan-driven
+    // projection, but simple mode doesn't need one (§7.2).
+    let (mut model, _) = tiny_model("1000000", "0");
+    model.profile.annual_spending = None;
+
+    let scenario = simple_scenario("fixed-percentage", Some("0.040"), 30);
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert_eq!(p.annual_spending, None);
+    assert_eq!(p.score, None, "the Score is a plan concept");
+
+    let err = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::MissingSpending), "{err}");
+}
+
+#[test]
+fn strategy_slug_changes_nothing_in_plan_mode() {
+    // §7.1: Meridian simulation is demand-driven; the slug only labels the
+    // scenario's SWR. Two plan-mode runs differing only in slug are identical.
+    let (model, mut scenario) = tiny_model("1000000", "40000");
+    scenario.withdrawal.strategy = Some("constant-dollar".to_string());
+    scenario.withdrawal.rate = Some("0.040".to_string());
+    let a = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
+    scenario.withdrawal.strategy = Some("vpw".to_string());
+    let b = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Plan,
+    )
+    .unwrap();
+    assert_eq!(format!("{a:?}"), format!("{b:?}"));
 }
