@@ -1,0 +1,5 @@
+id = "mortgage"
+name = "Mortgage"
+type = "liability"
+currency = "USD"
+institution = "Example Bank"

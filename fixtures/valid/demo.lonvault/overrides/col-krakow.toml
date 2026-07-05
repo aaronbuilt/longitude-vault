@@ -1,0 +1,6 @@
+[[override]]
+key = "col.pl.krakow.housing.comfortable"
+value = "4200"
+currency = "PLN"
+note = "actual rent, 2-room Kazimierz, 2026"
+as_of = 2026-06-01

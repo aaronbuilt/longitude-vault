@@ -1,0 +1,15 @@
+id = "schwab-brokerage"
+name = "Schwab Brokerage"
+type = "brokerage"
+currency = "USD"
+tax_jurisdiction = "us"
+tax_wrapper = "taxable"
+institution = "Charles Schwab"
+opened = 2015-03-01
+
+[[holding]]
+asset = "VT"
+kind = "security"
+quantity = "1234.567"
+cost_basis = { amount = "95000.00", currency = "USD" }
+acquired = 2019-05-10

@@ -1,0 +1,62 @@
+id = "half-life-krakow-tokyo"
+name = "Half-life: Kraków + Tokyo"
+targeted = true
+created = 2026-07-03
+
+[timeline]
+start = 2027-01-01
+horizon_years = 50
+
+[[residency]]
+place = "pl/krakow"
+months_per_year = 5
+
+[[residency]]
+place = "jp/tokyo"
+months_per_year = 4
+
+[[residency]]
+place = "us/detroit"
+months_per_year = 3
+
+[expenses]
+lifestyle = "comfortable"
+extra_monthly = { amount = "300", currency = "USD" }
+
+[[income]]
+id = "salary"
+kind = "employment"
+amount = { amount = "8500.00", currency = "USD" }
+frequency = "monthly"
+from = 2027-01-01
+to = 2031-12-31
+growth = "0.020"
+
+[portfolio]
+from_vault = true
+
+[[portfolio.allocation]]
+class = "equities-global"
+weight = "0.70"
+expected_return = "0.050"
+volatility = "0.160"
+
+[[portfolio.allocation]]
+class = "bonds-global"
+weight = "0.20"
+expected_return = "0.015"
+volatility = "0.060"
+
+[[portfolio.allocation]]
+class = "btc"
+weight = "0.10"
+expected_return = "0.080"
+volatility = "0.600"
+
+[withdrawal]
+strategy = "fixed-percentage"
+rate = "0.040"
+
+[tax]
+feie = true
+treaty_positions = ["us-pl"]

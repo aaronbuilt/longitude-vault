@@ -1,0 +1,4 @@
+# TEST KEY — publicly committed conformance fixture key.
+# NEVER use it to encrypt real data.
+# public key: age1cwzph6fnucj8jnt94n2e3gntyxvpxf9egjmt38f0q3fjn7qxx46q3p64s2
+AGE-SECRET-KEY-1K0YZ3V70QW4PAENPFJWDRZSX7GML0HM8U68H9NA3QSLPREYUVS4Q2GGEHF

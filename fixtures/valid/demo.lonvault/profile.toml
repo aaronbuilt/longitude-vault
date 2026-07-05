@@ -1,0 +1,10 @@
+birth_year = 1990
+passports = ["US"]
+tax_residency = "us"
+target_retirement_age = 45
+annual_spending = { amount = "60000", currency = "USD" }
+annual_savings = { amount = "40000", currency = "USD" }
+swr = "0.040"
+lifestyle = "comfortable"
+display_currency = "USD"
+household = 1

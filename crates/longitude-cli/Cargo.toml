@@ -1,0 +1,20 @@
+[package]
+name = "longitude-cli"
+description = "Reference CLI for the Longitude vault format: init, check, pack, unpack, export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "longitude"
+path = "src/main.rs"
+
+[dependencies]
+age = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+humantime = "2"
+longitude-vault = { path = "../longitude-vault" }
+rpassword = "7"
+uuid = { version = "1", features = ["v4"] }

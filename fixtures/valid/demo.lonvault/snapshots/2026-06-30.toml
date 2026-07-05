@@ -1,0 +1,14 @@
+date = 2026-06-30
+note = "mid-year check"
+
+[[balance]]
+account = "schwab-brokerage"
+value = { amount = "412345.67", currency = "USD" }
+
+[[balance]]
+account = "cold-storage"
+value = { amount = "101250.00", currency = "USD" }
+
+[[balance]]
+account = "mortgage"
+value = { amount = "182000.00", currency = "USD" }

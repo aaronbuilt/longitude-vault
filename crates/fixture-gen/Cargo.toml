@@ -1,0 +1,14 @@
+[package]
+name = "fixture-gen"
+description = "Generates the conformance fixtures in fixtures/ (run once, commit the output)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+age = { workspace = true }
+anyhow = { workspace = true }
+longitude-vault = { path = "../longitude-vault" }
+zstd = { workspace = true }

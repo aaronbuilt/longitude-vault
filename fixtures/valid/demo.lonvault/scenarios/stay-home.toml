@@ -1,0 +1,11 @@
+id = "stay-home"
+name = "Stay home: Detroit baseline"
+created = 2026-07-03
+
+[[residency]]
+place = "us/detroit"
+months_per_year = 12
+
+[withdrawal]
+strategy = "constant-dollar"
+rate = "0.040"

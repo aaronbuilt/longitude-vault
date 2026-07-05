@@ -1,0 +1,10 @@
+id = "cold-storage"
+name = "Cold Storage"
+type = "crypto"
+currency = "USD"
+
+# Watch-only, manual quantity — never private keys (SPEC §7).
+[[holding]]
+asset = "BTC"
+kind = "crypto"
+quantity = "1.50000000"
