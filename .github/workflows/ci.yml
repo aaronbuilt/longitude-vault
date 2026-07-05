@@ -32,3 +32,14 @@ jobs:
           mkdir out && cd out
           age -d -i ../fixtures/identities/fixture-key.txt ../fixtures/valid/demo.lon | zstd -d | tar -x
           diff -r ../fixtures/valid/demo.lonvault .
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: a longitude-keygen key is a standard age key (stock age opens it)
+        run: |
+          cargo build -p longitude-cli --quiet
+          BIN=target/debug/longitude
+          "$BIN" keygen -o key.txt
+          "$BIN" vault pack fixtures/valid/demo.lonvault -o mine.lon -i key.txt
+          mkdir kout && cd kout
+          age -d -i ../key.txt ../mine.lon | zstd -d | tar -x
+          diff -r ../fixtures/valid/demo.lonvault .

@@ -56,6 +56,13 @@ enum Command {
         #[arg(long, default_value_t = 256)]
         max_size_mib: u64,
     },
+    /// Generate an age identity — a standard age key file (opens with stock age too)
+    Keygen {
+        /// Write the identity here (default: stdout). The public key always goes
+        /// to stderr, so `longitude keygen > identity.txt` captures only the key.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -158,6 +165,7 @@ fn main() -> ExitCode {
             table,
             max_size_mib,
         ),
+        Command::Keygen { output } => cmd_keygen(output.as_deref()),
     };
     match result {
         Ok(code) => code,
@@ -190,11 +198,64 @@ fn cmd_init(dir: &Path, demo: bool) -> Result<ExitCode> {
     );
     println!();
     println!("next steps:");
-    println!("  age-keygen -o identity.txt          # make a device key (keep it safe)");
+    println!("  longitude keygen -o identity.txt     # make a device key (keep it safe)");
     println!(
         "  longitude vault pack {} -o vault.lon -i identity.txt",
         dir.display()
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_keygen(output: Option<&Path>) -> Result<ExitCode> {
+    use age::secrecy::ExposeSecret;
+
+    let identity = age::x25519::Identity::generate();
+    let public = identity.to_public();
+    let created = humantime::format_rfc3339_seconds(std::time::SystemTime::now());
+
+    // The standard age identity-file shape: two comment lines then the secret,
+    // byte-for-byte what `age-keygen` writes. Nothing here is Longitude-specific
+    // — stock age reads this file, and this is a convenience over `age-keygen`,
+    // not a fork of it.
+    let secret = identity.to_string();
+    let body = format!(
+        "# created: {created}\n# public key: {public}\n{}\n",
+        secret.expose_secret()
+    );
+
+    match output {
+        Some(path) => {
+            if path.exists() {
+                bail!(
+                    "{} already exists — refusing to overwrite an identity file \
+                     (overwriting a key locks you out of every vault encrypted to it)",
+                    path.display()
+                );
+            }
+            fs::write(path, &body)
+                .with_context(|| format!("writing identity to {}", path.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                    .with_context(|| format!("restricting permissions on {}", path.display()))?;
+            }
+            eprintln!("Public key: {public}");
+            eprintln!(
+                "wrote identity to {} — back it up; it is the only way to open \
+                 vaults encrypted to it (§6.1)",
+                path.display()
+            );
+        }
+        None => {
+            use std::io::Write;
+            // Identity to stdout, public key to stderr — mirrors age-keygen, so
+            // `longitude keygen > identity.txt` captures only the secret key.
+            print!("{body}");
+            std::io::stdout().flush().ok();
+            eprintln!("Public key: {public}");
+        }
+    }
     Ok(ExitCode::SUCCESS)
 }
 

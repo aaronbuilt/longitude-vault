@@ -32,7 +32,7 @@ repo.
   core: deterministic single-scenario projection (current-state valuation,
   demand-driven monthly loop, FI date, Longitude Score)
 - [`crates/longitude-cli`](crates/longitude-cli) — the `longitude` CLI:
-  `vault init | check | pack | unpack | export`, plus `project`
+  `keygen`, `vault init | check | pack | unpack | export`, plus `project`
 - [`fixtures/`](fixtures) — conformance test vectors: the §9 reference vault
   in both physical forms, plus hostile containers (path traversal, symlinks,
   duplicate entries, a decompression bomb) that a conforming reader MUST
@@ -44,6 +44,13 @@ repo.
 cargo install --git https://github.com/aaronbuilt/longitude-vault longitude-cli
 ```
 
+Requires a recent stable [Rust toolchain](https://rustup.rs) to build; after
+that the CLI is self-contained. It bundles age and generates keys itself
+(`longitude keygen`), so the whole create → encrypt → project loop needs
+nothing else installed. Stock [age](https://age-encryption.org) is **optional**
+— you only need it for the `age -d | zstd -d | tar -x` recovery one-liner that
+opens a vault with zero Longitude software.
+
 ### Create and validate
 
 `init --demo` writes the complete SPEC §9 example vault — a person with a
@@ -53,6 +60,10 @@ and two life-design scenarios — so every command below works out of the box:
 ```console
 $ longitude vault init my.lonvault --demo
 created my.lonvault (10 documents)
+
+next steps:
+  longitude keygen -o identity.txt     # make a device key (keep it safe)
+  longitude vault pack my.lonvault -o vault.lon -i identity.txt
 
 $ longitude vault check my.lonvault
 vault is valid — no errors, no warnings
@@ -65,14 +76,18 @@ liability secured by an account that doesn't exist). It works on encrypted
 
 ### Encrypt, decrypt, export
 
-Keys are ordinary age keys — there is nothing Longitude-specific to lose:
+Keys are ordinary age keys — `longitude keygen` writes one, and `age-keygen`
+writes a byte-compatible file if you'd rather use stock age. There is nothing
+Longitude-specific to lose:
 
 ```console
-$ age-keygen -o identity.txt
+$ longitude keygen -o identity.txt
 Public key: age1rp8qlffdvad3wzx9y3jxmkdcwvqdp3e25a6p035cr8r4y8xxsapqtyus69
+wrote identity to identity.txt — back it up; it is the only way to open vaults encrypted to it (§6.1)
 
 $ longitude vault pack my.lonvault -o vault.lon -i identity.txt
 vault is valid — no errors, no warnings
+note: only one recipient. The spec strongly recommends encrypting to your device keys plus an offline recovery key (§6.1).
 packed 10 documents → vault.lon
 
 $ longitude vault unpack vault.lon -o restored -i identity.txt
@@ -111,6 +126,8 @@ Longitude Score  20.9%  (investable ÷ FI number)
 FI date          not reached within the horizon
 depletion        2045-09  (a withdrawal could not be met)
 end of horizon   0 USD
+
+note: spending comes from profile.annual_spending — pricing residency blocks from cost-of-living data is outside the open projection
 ```
 
 (Yes, the demo person's plan fails. Honest numbers are the product.) Add
@@ -139,6 +156,8 @@ Longitude Score  (a plan concept — not computed in simple mode)
 FI date          not reached within the horizon
 depletion        2051-06  (a withdrawal could not be met)
 end of horizon   0 USD
+
+note: no [[portfolio.allocation]] with weight + expected_return — assuming a 0% real return
 ```
 
 The 4% rule at a 0% real return depletes in exactly 25 years — the
