@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  liberation:
+    name: liberation guarantee (stock tools)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y age zstd
+      - name: open the conformance vault with zero Longitude software
+        run: |
+          mkdir out && cd out
+          age -d -i ../fixtures/identities/fixture-key.txt ../fixtures/valid/demo.lon | zstd -d | tar -x
+          diff -r ../fixtures/valid/demo.lonvault .
