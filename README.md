@@ -24,7 +24,7 @@ repo.
 
 ## Contents
 
-- [`SPEC.md`](SPEC.md) — the vault format specification, v0.1 (draft)
+- [`SPEC.md`](SPEC.md) — the vault format specification, v0.1
 - [`crates/longitude-vault`](crates/longitude-vault) — reference library
   (Rust): load, validate per §8, pack/unpack with the §5.4
   untrusted-container rules enforced while streaming
@@ -157,7 +157,8 @@ data-liberation guarantee, continuously tested.
 
 ## Status
 
-Spec: draft **v0.1 rev 5** (2026-07-05). Reference implementation:
+Spec: **v0.1 rev 6** (2026-07-05) — published and implemented, stable core,
+reserved extensions marked in the spec. Reference implementation:
 **v0.1.0** — validation, both physical forms, §5.4 hardening, conformance
 fixtures, and the open engine core (deterministic projection plus the
 four-strategy withdrawal registry). The format is young and feedback is welcome — open an issue for

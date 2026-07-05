@@ -1,8 +1,23 @@
-# The Longitude Vault Format — Specification v0.1 (draft)
+# The Longitude Vault Format — Specification v0.1
 
-*Status: draft, rev 5 · 2026-07-05 — rev 5 documents the optional
-`floor`/`ceiling` Money fields on `[withdrawal]` (§4.5), the annual clamp
-used by the `percent-with-bounds` withdrawal strategy. Rev 4 (2026-07-04)
+*Status: v0.1 · rev 6 · 2026-07-05 — published and implemented, not a draft.
+The reference CLI implements this spec and the conformance fixtures test it.
+The core documents (`manifest`, `profile`, `accounts`, `snapshots`,
+`scenarios`) and both physical forms (§5) are stable within the v0.x line:
+breaking changes to them bump the schema MAJOR (§3.7), and existing vaults
+keep opening. Still deliberately growing, and marked where it grows: the
+reserved `transactions/` and `notes/` sections (§4.7) and the world-data key
+vocabulary (§3.6, pending the curation pipeline). Additive fields arrive as
+MINOR revisions under the §3.7 ignore-unknown rule and never break an older
+reader.*
+
+*Changelog: rev 6 (2026-07-05) adds a normative §7 bullet
+requiring conforming applications to keep decrypted vault contents in memory
+and never persist a plaintext directory as a side effect of normal
+operation; explicit `unpack`-style extraction (§5.3) remains supported. Rev 5
+(2026-07-05) documents the optional `floor`/`ceiling` Money fields on
+`[withdrawal]` (§4.5), the annual clamp used by the `percent-with-bounds`
+withdrawal strategy. Rev 4 (2026-07-04)
 was the security-hardening and publication pass: untrusted-vault reading
 rules (§5.4), an explicit statement of what age does and does not provide
 (§6.5), key rotation (§6.6), a self-contained threat model (§7), and removal
@@ -582,6 +597,19 @@ consequences implementations MUST surface to the user:
   scope: a compromised endpoint — malware that can read process memory, the
   keychain, or the decrypted vault on the user's machine defeats any at-rest
   format — and traffic analysis beyond what §6.2 documents.
+- **Decrypted contents stay in memory (normative for apps).** A conforming
+  *application* (as opposed to the CLI's explicit conversion commands) SHOULD
+  hold decrypted vault contents in process memory only, editing the `.lon`
+  container in place — decrypt, mutate, re-encrypt — and MUST NOT write a
+  plaintext-mode directory to disk as a side effect of normal operation.
+  Extracting a plaintext working copy (§5.3, the reference CLI's `unpack`) is a
+  legitimate and supported action, but it MUST be explicit and user-initiated:
+  it is the liberation guarantee, not a caching strategy. Applications SHOULD
+  further minimize incidental plaintext spillage they control — decrypted
+  buffers, autosave/undo state, crash dumps — and are responsible for cleaning
+  up any plaintext they do write. This does not defend against the compromised
+  endpoint above; it keeps an *uncompromised* machine from accumulating
+  plaintext copies of the vault the user never asked for.
 
 ---
 
