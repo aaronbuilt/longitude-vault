@@ -42,29 +42,114 @@ repo.
 
 ```sh
 cargo install --git https://github.com/aaronbuilt/longitude-vault longitude-cli
-
-longitude vault init my.lonvault --demo      # the SPEC §9 example vault
-longitude vault check my.lonvault            # validate (§8) — works on .lon too
-age-keygen -o identity.txt                   # keys are plain age keys
-longitude vault pack my.lonvault -o vault.lon -i identity.txt
-longitude vault unpack vault.lon -o restored -i identity.txt
-longitude vault export my.lonvault -o handoff.lon   # passphrase-only (§6.4)
-
-longitude project my.lonvault --table               # deterministic projection
-longitude project vault.lon -i identity.txt         # works on containers too
-longitude project my.lonvault --simple              # strategy-driven spending
 ```
+
+### Create and validate
+
+`init --demo` writes the complete SPEC §9 example vault — a person with a
+brokerage account, cold-storage BTC, a mortgage, two months of snapshots,
+and two life-design scenarios — so every command below works out of the box:
+
+```console
+$ longitude vault init my.lonvault --demo
+created my.lonvault (10 documents)
+
+$ longitude vault check my.lonvault
+vault is valid — no errors, no warnings
+```
+
+`check` is the SPEC §8 validator. Errors are spec violations; warnings are
+things a human should look at (residency months that don't sum to 12, a
+liability secured by an account that doesn't exist). It works on encrypted
+`.lon` files too.
+
+### Encrypt, decrypt, export
+
+Keys are ordinary age keys — there is nothing Longitude-specific to lose:
+
+```console
+$ age-keygen -o identity.txt
+Public key: age1rp8qlffdvad3wzx9y3jxmkdcwvqdp3e25a6p035cr8r4y8xxsapqtyus69
+
+$ longitude vault pack my.lonvault -o vault.lon -i identity.txt
+vault is valid — no errors, no warnings
+packed 10 documents → vault.lon
+
+$ longitude vault unpack vault.lon -o restored -i identity.txt
+unpacked 10 documents → restored
+vault is valid — no errors, no warnings
+```
+
+`pack` refuses to encrypt an invalid vault, encrypts to every key you pass
+(device keys plus an offline recovery key is the recommended shape, §6.1),
+and warns if you pass only one. `longitude vault export` writes the §6.4
+passphrase-only form for handing a vault to someone without keys — after
+telling you, loudly, that its security is then the passphrase alone.
+
+### Project
 
 `longitude project` runs the **open engine core**: a deterministic
 single-scenario projection in real (inflation-adjusted) terms — investable
 assets from your snapshots, demand-driven withdrawals (spending − income,
 month by month), blended expected returns, FI date, depletion date, and the
-Longitude Score. With `--simple` the scenario's `[withdrawal]` strategy
-drives spending instead (ficalc-style): the v0.1 registry is
-`constant-dollar`, `fixed-percentage`, `percent-with-bounds`, and `vpw`.
-Deliberately out of scope here: Monte Carlo, cost-of-living
-data, tax, and visa modeling — that's the product's engine, built on this
-core. Estimates, not advice.
+Longitude Score:
+
+```console
+$ longitude project my.lonvault
+Longitude — deterministic projection (open engine core)
+All figures are real (today's prices), in USD. Estimates, not advice.
+
+scenario         Half-life: Kraków + Tokyo (half-life-krakow-tokyo, targeted)
+window           2027-01 → 2077-01 (50 years)
+
+t₀ investable    331,596 USD  (snapshots as of 2026-06-30)
+spending         63,600 USD / yr
+real return      4.6% / yr (blended)
+SWR              4.0%  →  FI number 1,590,000 USD
+Longitude Score  20.9%  (investable ÷ FI number)
+
+FI date          not reached within the horizon
+depletion        2045-09  (a withdrawal could not be met)
+end of horizon   0 USD
+```
+
+(Yes, the demo person's plan fails. Honest numbers are the product.) Add
+`--table` for the year-by-year breakdown, `--scenario <id>` to pick a
+scenario, and `-i identity.txt` to project straight off an encrypted
+`.lon`. A liability's `secured_by` keeps a mortgage and its house out of
+the investable math together; income streams grow in real terms on their
+anniversaries; a depleted portfolio latches as failed but keeps simulating,
+so a pension arriving later can still rescue the path.
+
+With `--simple` the scenario's `[withdrawal]` strategy drives spending
+instead (the ficalc-style paradigm — a portfolio plus a rule, no plan).
+The v0.1 registry is `constant-dollar`, `fixed-percentage`,
+`percent-with-bounds` (with optional `floor`/`ceiling` clamps), and `vpw`:
+
+```console
+$ longitude project my.lonvault --simple --scenario stay-home
+…
+t₀ investable    331,596 USD  (snapshots as of 2026-06-30)
+spending         strategy-driven: constant-dollar @ 4.0%
+  first year     13,264 USD / yr
+  across years   13,264 USD – 13,264 USD / yr
+real return      0.0% / yr (blended)
+Longitude Score  (a plan concept — not computed in simple mode)
+
+FI date          not reached within the horizon
+depletion        2051-06  (a withdrawal could not be met)
+end of horizon   0 USD
+```
+
+The 4% rule at a 0% real return depletes in exactly 25 years — the
+closed-form results are pinned by tests, which is what makes this CLI the
+reference for cross-validating the product engine.
+
+Deliberately out of scope here: Monte Carlo, cost-of-living data, tax, and
+visa modeling — that's the product's engine, built on this core. Estimates,
+not advice.
+
+### The liberation guarantee, tested
 
 CI includes a job that opens the conformance vault with **stock `age`,
 `zstd`, and `tar` only** and diffs it against the plaintext form — the
@@ -74,7 +159,8 @@ data-liberation guarantee, continuously tested.
 
 Spec: draft **v0.1 rev 5** (2026-07-05). Reference implementation:
 **v0.1.0** — validation, both physical forms, §5.4 hardening, conformance
-fixtures. The format is young and feedback is welcome — open an issue for
+fixtures, and the open engine core (deterministic projection plus the
+four-strategy withdrawal registry). The format is young and feedback is welcome — open an issue for
 anything from a typo to a hole in the threat model (§5.4/§6.5 of the spec
 are the security-relevant parts and have had one hardening pass).
 
