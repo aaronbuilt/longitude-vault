@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/longitude-vault", "crates/longitude-cli", "crates/fixture-gen"]
+members = [
+    "crates/longitude-vault",
+    "crates/longitude-engine",
+    "crates/longitude-cli",
+    "crates/fixture-gen",
+]
 
 [workspace.package]
 version = "0.1.0"

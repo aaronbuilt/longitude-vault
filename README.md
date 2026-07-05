@@ -28,8 +28,11 @@ repo.
 - [`crates/longitude-vault`](crates/longitude-vault) — reference library
   (Rust): load, validate per §8, pack/unpack with the §5.4
   untrusted-container rules enforced while streaming
+- [`crates/longitude-engine`](crates/longitude-engine) — the open engine
+  core: deterministic single-scenario projection (current-state valuation,
+  demand-driven monthly loop, FI date, Longitude Score)
 - [`crates/longitude-cli`](crates/longitude-cli) — the `longitude` CLI:
-  `vault init | check | pack | unpack | export`
+  `vault init | check | pack | unpack | export`, plus `project`
 - [`fixtures/`](fixtures) — conformance test vectors: the §9 reference vault
   in both physical forms, plus hostile containers (path traversal, symlinks,
   duplicate entries, a decompression bomb) that a conforming reader MUST
@@ -46,10 +49,18 @@ age-keygen -o identity.txt                   # keys are plain age keys
 longitude vault pack my.lonvault -o vault.lon -i identity.txt
 longitude vault unpack vault.lon -o restored -i identity.txt
 longitude vault export my.lonvault -o handoff.lon   # passphrase-only (§6.4)
+
+longitude project my.lonvault --table               # deterministic projection
+longitude project vault.lon -i identity.txt         # works on containers too
 ```
 
-The deterministic single-scenario projection (`longitude project`) is the
-next piece; it lands in this repo when the engine core does.
+`longitude project` runs the **open engine core**: a deterministic
+single-scenario projection in real (inflation-adjusted) terms — investable
+assets from your snapshots, demand-driven withdrawals (spending − income,
+month by month), blended expected returns, FI date, depletion date, and the
+Longitude Score. Deliberately out of scope here: Monte Carlo, cost-of-living
+data, tax, and visa modeling — that's the product's engine, built on this
+core. Estimates, not advice.
 
 CI includes a job that opens the conformance vault with **stock `age`,
 `zstd`, and `tar` only** and diffs it against the plaintext form — the

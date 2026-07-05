@@ -15,6 +15,8 @@ age = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 humantime = "2"
+longitude-engine = { path = "../longitude-engine" }
 longitude-vault = { path = "../longitude-vault" }
 rpassword = "7"
+rust_decimal = "1"
 uuid = { version = "1", features = ["v4"] }

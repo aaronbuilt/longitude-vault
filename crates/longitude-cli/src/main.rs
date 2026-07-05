@@ -29,9 +29,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Work with vaults (the only namespace in v0.1)
+    /// Work with vaults
     #[command(subcommand)]
     Vault(VaultCommand),
+    /// Deterministic single-scenario projection (the open engine core)
+    Project {
+        /// Vault directory or .lon file
+        path: PathBuf,
+        /// age identity file (repeatable); may itself be passphrase-encrypted (.age)
+        #[arg(short, long)]
+        identity: Vec<PathBuf>,
+        /// Scenario id to project (default: the targeted scenario)
+        #[arg(short, long)]
+        scenario: Option<String>,
+        /// Valuation month as YYYY-MM (default: the current month)
+        #[arg(long)]
+        now: Option<String>,
+        /// Print the year-by-year table
+        #[arg(long)]
+        table: bool,
+        /// Decompressed-size ceiling in MiB (§5.4 resource limits)
+        #[arg(long, default_value_t = 256)]
+        max_size_mib: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -117,6 +137,21 @@ fn main() -> ExitCode {
             } => cmd_unpack(&file, &output, &identity, max_size_mib),
             VaultCommand::Export { dir, output } => cmd_export(&dir, &output),
         },
+        Command::Project {
+            path,
+            identity,
+            scenario,
+            now,
+            table,
+            max_size_mib,
+        } => cmd_project(
+            &path,
+            &identity,
+            scenario.as_deref(),
+            now.as_deref(),
+            table,
+            max_size_mib,
+        ),
     };
     match result {
         Ok(code) => code,
@@ -274,6 +309,158 @@ fn cmd_export(dir: &Path, output: &Path) -> Result<ExitCode> {
         output.display()
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_project(
+    path: &Path,
+    identity_paths: &[PathBuf],
+    scenario_id: Option<&str>,
+    now: Option<&str>,
+    table: bool,
+    max_size_mib: u64,
+) -> Result<ExitCode> {
+    let (vault, mode) = load_vault(path, identity_paths, max_size_mib)?;
+    let report = validate(&vault, mode);
+    if !report.is_valid() {
+        print_report(&report);
+        bail!("refusing to project an invalid vault (fix the errors above)");
+    }
+
+    let now = match now {
+        Some(s) => parse_month(s)?,
+        None => current_month(),
+    };
+    let model = longitude_engine::extract(&vault)?;
+    let scenario = model.select_scenario(scenario_id)?;
+    let projection = longitude_engine::project(&model, scenario, now)?;
+    print_projection(&projection, &model.base_currency, table);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn parse_month(s: &str) -> Result<longitude_engine::Month> {
+    let (y, m) = s
+        .split_once('-')
+        .ok_or_else(|| anyhow::anyhow!("--now must be YYYY-MM, got {s:?}"))?;
+    let year: i32 = y.parse().context("--now year")?;
+    let month: u8 = m.parse().context("--now month")?;
+    if !(1..=12).contains(&month) {
+        bail!("--now month must be 01–12");
+    }
+    Ok(longitude_engine::Month::from_ym(year, month))
+}
+
+fn current_month() -> longitude_engine::Month {
+    // RFC 3339 is YYYY-MM-…, so the first seven characters are the month.
+    let now = humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
+    let year: i32 = now[0..4].parse().unwrap_or(2026);
+    let month: u8 = now[5..7].parse().unwrap_or(1);
+    longitude_engine::Month::from_ym(year, month)
+}
+
+fn fmt_money(v: f64, currency: &str) -> String {
+    let negative = v < 0.0;
+    let whole = v.abs().round() as u64;
+    let digits = whole.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    format!("{}{} {}", if negative { "-" } else { "" }, out, currency)
+}
+
+fn print_projection(p: &longitude_engine::Projection, currency: &str, table: bool) {
+    use rust_decimal::prelude::ToPrimitive;
+
+    println!("Longitude — deterministic projection (open engine core)");
+    println!("All figures are real (today's prices), in {currency}. Estimates, not advice.");
+    println!();
+    println!(
+        "scenario         {} ({}{})",
+        p.scenario_name,
+        p.scenario_id,
+        if p.targeted { ", targeted" } else { "" }
+    );
+    println!(
+        "window           {} → {} ({} years)",
+        p.start,
+        p.start.plus_months(p.horizon_years as i32 * 12),
+        p.horizon_years
+    );
+    println!();
+    let as_of = p
+        .valuation_as_of
+        .map(|d| format!("  (snapshots as of {d})"))
+        .unwrap_or_default();
+    println!(
+        "t₀ investable    {}{as_of}",
+        fmt_money(p.t0_investable.to_f64().unwrap_or(0.0), currency)
+    );
+    println!(
+        "spending         {} / yr",
+        fmt_money(p.annual_spending.to_f64().unwrap_or(0.0), currency)
+    );
+    println!(
+        "real return      {:.1}% / yr (blended)",
+        p.blended_return * 100.0
+    );
+    match (p.swr, p.fi_number, p.score) {
+        (Some(swr), Some(fi), Some(score)) => {
+            println!(
+                "SWR              {:.1}%  →  FI number {}",
+                swr.to_f64().unwrap_or(0.0) * 100.0,
+                fmt_money(fi.to_f64().unwrap_or(0.0), currency)
+            );
+            println!(
+                "Longitude Score  {:.1}%  (investable ÷ FI number)",
+                score * 100.0
+            );
+        }
+        _ => println!("SWR              (unavailable — no rate; Score skipped)"),
+    }
+    println!();
+    match p.fi_month {
+        Some(m) => println!("FI date          {m}  (portfolio first ≥ FI number)"),
+        None => println!("FI date          not reached within the horizon"),
+    }
+    match p.depletion_month {
+        Some(m) => {
+            let tail = if p.recovered {
+                "  — later income rebuilt the portfolio (recovered)"
+            } else {
+                ""
+            };
+            println!("depletion        {m}  (a withdrawal could not be met){tail}");
+        }
+        None => println!("depletion        none — the portfolio funds this plan to horizon"),
+    }
+    println!("end of horizon   {}", fmt_money(p.end_balance, currency));
+
+    if table {
+        println!();
+        println!(
+            "{:>6}  {:>14}  {:>14}  {:>16}",
+            "year", "income", "expenses", "end balance"
+        );
+        for row in &p.years {
+            println!(
+                "{:>6}  {:>14}  {:>14}  {:>16}",
+                row.year,
+                fmt_money(row.income, currency),
+                fmt_money(row.expenses, currency),
+                fmt_money(row.end_balance, currency)
+            );
+        }
+    }
+
+    if !p.warnings.is_empty() {
+        println!();
+        for w in &p.warnings {
+            eprintln!("note: {w}");
+        }
+    }
 }
 
 // ============================ shared plumbing ===============================

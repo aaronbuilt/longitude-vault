@@ -1,0 +1,14 @@
+[package]
+name = "longitude-engine"
+description = "Open engine core for Longitude: deterministic single-scenario projection over a vault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+longitude-vault = { path = "../longitude-vault" }
+rust_decimal = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = { workspace = true }
+toml = { workspace = true }
