@@ -293,8 +293,7 @@ fn simple_scenario(strategy: &str, rate: Option<&str>, horizon: u32) -> Scenario
         withdrawal: Withdrawal {
             strategy: Some(strategy.to_string()),
             rate: rate.map(|r| r.to_string()),
-            floor: None,
-            ceiling: None,
+            ..Withdrawal::default()
         },
     }
 }
@@ -535,4 +534,179 @@ fn strategy_slug_changes_nothing_in_plan_mode() {
     )
     .unwrap();
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
+}
+
+// ------------------------- discretionary-guardrail -------------------------
+
+use longitude_engine::strategy::{
+    ev_multiplier, STATE_MONTHS_BEAR, STATE_MONTHS_CORRECTION, STATE_MONTHS_NORMAL,
+    STATE_MONTHS_TOTAL,
+};
+
+fn guardrail_scenario(rate: &str, horizon: u32) -> Scenario {
+    simple_scenario("discretionary-guardrail", Some(rate), horizon)
+}
+
+#[test]
+fn state_frequencies_are_a_partition() {
+    assert_eq!(
+        STATE_MONTHS_NORMAL + STATE_MONTHS_CORRECTION + STATE_MONTHS_BEAR,
+        STATE_MONTHS_TOTAL
+    );
+    assert_eq!(STATE_MONTHS_TOTAL, 97 * 12, "Jan 1926 – Dec 2022");
+    // no cuts ever = the full discretionary budget on the average month
+    assert!((ev_multiplier(1.0, 1.0) - 1.0).abs() < 1e-12);
+    // total cuts in every down state = only normal months fund it
+    assert!(
+        (ev_multiplier(0.0, 0.0) - STATE_MONTHS_NORMAL as f64 / STATE_MONTHS_TOTAL as f64).abs()
+            < 1e-12
+    );
+}
+
+#[test]
+fn guardrail_all_essential_reduces_to_constant_dollar() {
+    // essential_fraction = 1 leaves nothing to flex: byte-for-byte the
+    // 4%-rule shape — 1,000,000 at 0% real depletes in exactly 25 years.
+    let (model, _) = tiny_model("1000000", "0");
+    let mut scenario = guardrail_scenario("0.040", 40);
+    scenario.withdrawal.essential_fraction = Some("1.0".to_string());
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!(p.failed);
+    let months = p
+        .depletion_month
+        .unwrap()
+        .months_since(Month::from_ym(2027, 1));
+    assert!(
+        (299..=301).contains(&months),
+        "depleted after {months} months"
+    );
+    let o = p.strategy.as_ref().unwrap();
+    assert!((o.first_year - 40_000.0).abs() < 1e-9);
+    assert!(
+        (o.min_year - o.max_year).abs() < 1e-9,
+        "fixed in real terms"
+    );
+}
+
+#[test]
+fn guardrail_ev_math_matches_the_worked_example() {
+    // The Madfientist worked example, EV-funded: $1M @ 5.5%, half essential.
+    // initial = 55,000; essential = 27,500; discretionary = 27,500 funded at
+    // m = (582 + 0.5×177) / 1164, so spending = 27,500 × (1 + m), every year.
+    let (model, _) = tiny_model("1000000", "0");
+    let mut scenario = guardrail_scenario("0.055", 40);
+    scenario.withdrawal.essential_fraction = Some("0.5".to_string());
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    let m = ev_multiplier(0.5, 0.0);
+    let o = p.strategy.as_ref().unwrap();
+    assert!((o.first_year - 27_500.0 * (1.0 + m)).abs() < 1e-6);
+    assert!(
+        (o.min_year - o.max_year).abs() < 1e-9,
+        "EV pass is constant"
+    );
+    assert!((o.essential.unwrap() - 27_500.0).abs() < 1e-9);
+    assert!((o.ev_multiplier.unwrap() - m).abs() < 1e-12);
+    assert!(
+        p.warnings.iter().any(|w| w.contains("expected value")),
+        "the deterministic stand-in must announce itself: {:?}",
+        p.warnings
+    );
+}
+
+#[test]
+fn guardrail_essential_money_form() {
+    let (model, _) = tiny_model("1000000", "0");
+    let mut scenario = guardrail_scenario("0.040", 40);
+    scenario.withdrawal.essential = Some(money("20000"));
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    let m = ev_multiplier(0.5, 0.0);
+    let o = p.strategy.as_ref().unwrap();
+    assert!((o.first_year - (20_000.0 + 20_000.0 * m)).abs() < 1e-6);
+}
+
+#[test]
+fn guardrail_never_guesses_a_split() {
+    let (model, _) = tiny_model("1000000", "0");
+
+    // neither form present: refused
+    let scenario = guardrail_scenario("0.040", 30);
+    let err = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::MissingSplit), "{err}");
+
+    // both forms present: also refused
+    let mut scenario = guardrail_scenario("0.040", 30);
+    scenario.withdrawal.essential = Some(money("20000"));
+    scenario.withdrawal.essential_fraction = Some("0.5".to_string());
+    let err = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::MissingSplit), "{err}");
+}
+
+#[test]
+fn guardrail_essential_beyond_the_rate_is_refused() {
+    // 60,000 essential from a 40,000 initial withdrawal: the rate cannot
+    // cover essentials — configuration error, not a projection.
+    let (model, _) = tiny_model("1000000", "0");
+    let mut scenario = guardrail_scenario("0.040", 30);
+    scenario.withdrawal.essential = Some(money("60000"));
+    let err = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::Value(_)), "{err}");
+}
+
+#[test]
+fn guardrail_outlasts_constant_dollar_at_the_same_rate() {
+    // The whole point: flexing the discretionary half means spending less
+    // than rate × t0 on the average year, so depletion arrives later than
+    // the constant-dollar 25 years (0% real return, 4%, half essential).
+    let (model, _) = tiny_model("1000000", "0");
+    let mut scenario = guardrail_scenario("0.040", 60);
+    scenario.withdrawal.essential_fraction = Some("0.5".to_string());
+    let p = project(
+        &model,
+        &scenario,
+        Month::from_ym(2026, 7),
+        SpendingMode::Simple,
+    )
+    .unwrap();
+    assert!(p.failed, "0% real still depletes eventually");
+    let months = p
+        .depletion_month
+        .unwrap()
+        .months_since(Month::from_ym(2027, 1));
+    assert!(months > 301, "outlasted 25 years: {months} months");
 }

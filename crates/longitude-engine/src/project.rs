@@ -41,6 +41,12 @@ pub enum EngineError {
     #[error("withdrawal strategy {slug:?} needs [withdrawal].rate")]
     MissingRate { slug: String },
     #[error(
+        "strategy \"discretionary-guardrail\" requires exactly one of \
+         [withdrawal].essential / [withdrawal].essential_fraction — \
+         the engine never guesses a split (§4.5)"
+    )]
+    MissingSplit,
+    #[error(
         "no scenario selected: none is targeted and the vault has several — \
          pass --scenario <id>; available: {}", available.join(", ")
     )]
@@ -68,6 +74,11 @@ pub struct StrategyOutcome {
     pub rate: Option<f64>,
     pub floor: Option<f64>,
     pub ceiling: Option<f64>,
+    /// discretionary-guardrail only: the resolved essential annual spend and
+    /// the expected-value share at which the deterministic pass funds the
+    /// discretionary budget.
+    pub essential: Option<f64>,
+    pub ev_multiplier: Option<f64>,
     /// Annual spending set at the first year boundary.
     pub first_year: f64,
     /// Extremes across all simulation years.
@@ -301,6 +312,44 @@ pub fn project(
         SpendingMode::Plan => None,
     };
 
+    // discretionary-guardrail: resolve the split against the initial
+    // withdrawal up front — an essential figure the stated rate cannot even
+    // cover is a configuration error, not a projection.
+    let mut guardrail: Option<(f64, f64)> = None; // (essential, ev multiplier)
+    if let Some(Strategy::DiscretionaryGuardrail {
+        rate,
+        essential,
+        correction_cut,
+        bear_cut,
+    }) = &strategy
+    {
+        let initial = rate * t0_investable.to_f64().unwrap_or(0.0);
+        let resolved = essential.resolve(initial);
+        if resolved > initial {
+            return Err(EngineError::Value(format!(
+                "withdrawal.essential ({resolved:.2}) exceeds the initial withdrawal \
+                 ({initial:.2} = rate × t₀) — the stated rate cannot cover the \
+                 essential budget, so there is no discretionary slice to flex"
+            )));
+        }
+        let m = crate::strategy::ev_multiplier(*correction_cut, *bear_cut);
+        guardrail = Some((resolved, m));
+        warnings.push(format!(
+            "discretionary-guardrail: this deterministic pass has no market path, so the \
+             discretionary budget is funded at its historical expected value ({:.1}% — \
+             S&P monthly closes 1926–2022: {:.0}% of months <10% off the high, {:.0}% in \
+             correction, {:.0}% in bear) — market-state path simulation is engine \
+             territory outside this CLI",
+            m * 100.0,
+            100.0 * crate::strategy::STATE_MONTHS_NORMAL as f64
+                / crate::strategy::STATE_MONTHS_TOTAL as f64,
+            100.0 * crate::strategy::STATE_MONTHS_CORRECTION as f64
+                / crate::strategy::STATE_MONTHS_TOTAL as f64,
+            100.0 * crate::strategy::STATE_MONTHS_BEAR as f64
+                / crate::strategy::STATE_MONTHS_TOTAL as f64,
+        ));
+    }
+
     // ---- blended deterministic return (§6.2) --------------------------------
     let mut weight_sum = 0.0;
     let mut blended = 0.0;
@@ -431,7 +480,8 @@ pub fn project(
         rate: match s {
             Strategy::ConstantDollar { rate }
             | Strategy::FixedPercentage { rate }
-            | Strategy::PercentWithBounds { rate, .. } => Some(*rate),
+            | Strategy::PercentWithBounds { rate, .. }
+            | Strategy::DiscretionaryGuardrail { rate, .. } => Some(*rate),
             Strategy::Vpw => None,
         },
         floor: match s {
@@ -442,6 +492,8 @@ pub fn project(
             Strategy::PercentWithBounds { ceiling, .. } => *ceiling,
             _ => None,
         },
+        essential: guardrail.map(|(e, _)| e),
+        ev_multiplier: guardrail.map(|(_, m)| m),
         first_year: 0.0,
         min_year: f64::INFINITY,
         max_year: 0.0,

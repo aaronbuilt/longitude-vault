@@ -141,7 +141,16 @@ so a pension arriving later can still rescue the path.
 With `--simple` the scenario's `[withdrawal]` strategy drives spending
 instead (the ficalc-style paradigm — a portfolio plus a rule, no plan).
 The v0.1 registry is `constant-dollar`, `fixed-percentage`,
-`percent-with-bounds` (with optional `floor`/`ceiling` clamps), and `vpw`:
+`percent-with-bounds` (with optional `floor`/`ceiling` clamps), `vpw`, and
+`discretionary-guardrail` — the two-bucket flexibility rule (after
+[Madfientist × Nick Maggiulli](https://www.madfientist.com/discretionary-withdrawal-strategy/)):
+your essential spending behaves as constant-dollar, and the discretionary
+remainder gets cut when the market is 10%/20% off its highs. The split is
+required (`essential` as Money, or `essential_fraction`) — the engine
+refuses to guess it. This deterministic pass has no market path, so it
+funds the discretionary budget at its historical expected-value share
+(S&P monthly closes, 1926–2022) and says so in a note; the market-state
+path simulation belongs to the product engine.
 
 ```console
 $ longitude project my.lonvault --simple --scenario stay-home
@@ -176,11 +185,11 @@ data-liberation guarantee, continuously tested.
 
 ## Status
 
-Spec: **v0.1 rev 6** (2026-07-05) — published and implemented, stable core,
+Spec: **v0.1 rev 7** (2026-07-14) — published and implemented, stable core,
 reserved extensions marked in the spec. Reference implementation:
 **v0.1.0** — validation, both physical forms, §5.4 hardening, conformance
 fixtures, and the open engine core (deterministic projection plus the
-four-strategy withdrawal registry). The format is young and feedback is welcome — open an issue for
+five-strategy withdrawal registry). The format is young and feedback is welcome — open an issue for
 anything from a typo to a hole in the threat model (§5.4/§6.5 of the spec
 are the security-relevant parts and have had one hardening pass).
 

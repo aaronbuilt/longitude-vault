@@ -478,6 +478,12 @@ fn print_projection(p: &longitude_engine::Projection, currency: &str, table: boo
         ),
         (None, Some(s)) => {
             let params = match (s.rate, s.floor, s.ceiling) {
+                (Some(r), None, None) if s.essential.is_some() => format!(
+                    " @ {:.1}%, essential {} (discretionary × {:.3} EV)",
+                    r * 100.0,
+                    fmt_money(s.essential.unwrap_or(0.0), currency),
+                    s.ev_multiplier.unwrap_or(1.0),
+                ),
                 (Some(r), None, None) => format!(" @ {:.1}%", r * 100.0),
                 (Some(r), floor, ceiling) => format!(
                     " @ {:.1}% in [{} – {}]",

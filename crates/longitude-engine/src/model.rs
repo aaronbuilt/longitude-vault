@@ -94,6 +94,15 @@ pub struct Withdrawal {
     /// percent-with-bounds only: annual clamp, real terms (§4.5).
     pub floor: Option<Money>,
     pub ceiling: Option<Money>,
+    /// discretionary-guardrail only: the essential/discretionary split —
+    /// exactly one of `essential` (annual Money, real) or
+    /// `essential_fraction` (fraction of the initial withdrawal) (§4.5).
+    pub essential: Option<Money>,
+    pub essential_fraction: Option<String>,
+    /// discretionary-guardrail only: fraction of the discretionary budget
+    /// still withdrawn per market state; default 0.5 / 0.0 (§4.5).
+    pub correction_cut: Option<String>,
+    pub bear_cut: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
