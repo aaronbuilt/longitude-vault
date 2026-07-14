@@ -30,7 +30,7 @@ pub fn minimal_vault(vault_id: &str, created_rfc3339: &str) -> RawVault {
 passports = ["US"]          # ISO 3166-1 alpha-2, uppercase — edit to yours
 tax_residency = "us"
 swr = "0.040"
-lifestyle = "comfortable"
+lifestyle = "comfort"
 "#;
     RawVault {
         documents: vec![
@@ -53,7 +53,7 @@ target_retirement_age = 45
 annual_spending = { amount = "60000", currency = "USD" }
 annual_savings = { amount = "40000", currency = "USD" }
 swr = "0.040"
-lifestyle = "comfortable"
+lifestyle = "comfort"
 display_currency = "USD"
 household = 1
 "#
@@ -165,7 +165,7 @@ place = "us/detroit"
 months_per_year = 3
 
 [expenses]
-lifestyle = "comfortable"
+lifestyle = "comfort"
 extra_monthly = { amount = "300", currency = "USD" }
 
 [[income]]
@@ -227,7 +227,7 @@ rate = "0.040"
         doc(
             "overrides/col-krakow.toml",
             r#"[[override]]
-key = "col.pl.krakow.housing.comfortable"
+key = "col.pl.krakow.housing.comfort"
 value = "4200"
 currency = "PLN"
 note = "actual rent, 2-room Kazimierz, 2026"

@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn world_data_keys() {
-        assert!(is_world_data_key("col.pl.krakow.housing.comfortable"));
+        assert!(is_world_data_key("col.pl.krakow.housing.comfort"));
         assert!(is_world_data_key("tax.us.federal.ltcg"));
         assert!(is_world_data_key("visa.jp.us-passport.max-stay-days"));
         assert!(!is_world_data_key("col.pl"));

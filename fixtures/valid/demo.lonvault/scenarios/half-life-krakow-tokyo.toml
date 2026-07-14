@@ -20,7 +20,7 @@ place = "us/detroit"
 months_per_year = 3
 
 [expenses]
-lifestyle = "comfortable"
+lifestyle = "comfort"
 extra_monthly = { amount = "300", currency = "USD" }
 
 [[income]]

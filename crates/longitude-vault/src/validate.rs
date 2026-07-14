@@ -31,7 +31,8 @@ const ACCOUNT_TYPES: &[&str] = &[
 ];
 const HOLDING_KINDS: &[&str] = &["security", "crypto", "cash", "custom"];
 const TAX_WRAPPERS: &[&str] = &["taxable", "traditional", "roth", "pension", "isa", "other"];
-const LIFESTYLES: &[&str] = &["lean", "comfortable", "luxury"];
+const LIFESTYLES: &[&str] = &["lean", "comfort", "premium"];
+const LEGACY_LIFESTYLES: &[(&str, &str)] = &[("comfortable", "comfort"), ("luxury", "premium")];
 const FREQUENCIES: &[&str] = &["monthly", "annual", "once"];
 const INCOME_KINDS: &[&str] = &[
     "employment",
@@ -439,6 +440,31 @@ fn enum_warn(
     }
 }
 
+/// `lifestyle` enum check with rev-7 legacy-alias handling: `comfortable` and
+/// `luxury` remain readable but draw a rename-suggesting warning.
+fn lifestyle_warn(t: &toml::map::Map<String, Value>, doc: &str, r: &mut Report) {
+    if let Some(Value::String(s)) = t.get("lifestyle") {
+        if let Some((legacy, canonical)) = LEGACY_LIFESTYLES.iter().find(|(l, _)| l == s) {
+            r.warning(
+                doc,
+                format!("`lifestyle` = {legacy:?} is a legacy alias — use {canonical:?} (rev 7)"),
+            );
+            return;
+        }
+    }
+    enum_warn(t, "lifestyle", LIFESTYLES, doc, r);
+}
+
+/// A decimal-string field that must additionally parse into [0, 1].
+fn check_unit_fraction(t: &toml::map::Map<String, Value>, key: &str, doc: &str, r: &mut Report) {
+    check_decimal(t, key, doc, false, r);
+    if let Some(Value::String(s)) = t.get(key) {
+        if grammar::is_decimal(s) && !(0.0..=1.0).contains(&s.parse::<f64>().unwrap_or(-1.0)) {
+            r.error(doc, format!("`{key}` = {s:?} must be within [0, 1] (§4.5)"));
+        }
+    }
+}
+
 // ============================ documents =====================================
 
 fn validate_manifest(v: &Value, r: &mut Report) {
@@ -542,7 +568,7 @@ fn validate_profile(v: &Value, r: &mut Report) {
     check_money(t, "annual_spending", doc, false, r);
     check_money(t, "annual_savings", doc, false, r);
     check_decimal(t, "swr", doc, false, r);
-    enum_warn(t, "lifestyle", LIFESTYLES, doc, r);
+    lifestyle_warn(t, doc, r);
     if let Some(cur) = opt_str(t, "display_currency", doc, r) {
         if !grammar::is_currency_code(cur) {
             r.error(
@@ -867,7 +893,7 @@ fn validate_scenario(doc: &str, stem: &str, v: &Value, targeted: &mut Vec<String
     }
 
     if let Some(expenses) = t.get("expenses").and_then(Value::as_table) {
-        enum_warn(expenses, "lifestyle", LIFESTYLES, doc, r);
+        lifestyle_warn(expenses, doc, r);
         check_money(expenses, "extra_monthly", doc, false, r);
     }
 
@@ -921,6 +947,21 @@ fn validate_scenario(doc: &str, stem: &str, v: &Value, targeted: &mut Vec<String
         check_decimal(withdrawal, "rate", doc, false, r);
         check_money(withdrawal, "floor", doc, false, r);
         check_money(withdrawal, "ceiling", doc, false, r);
+        check_money(withdrawal, "essential", doc, false, r);
+        check_unit_fraction(withdrawal, "essential_fraction", doc, r);
+        check_unit_fraction(withdrawal, "correction_cut", doc, r);
+        check_unit_fraction(withdrawal, "bear_cut", doc, r);
+        if withdrawal.get("strategy").and_then(Value::as_str) == Some("discretionary-guardrail")
+            && (withdrawal.contains_key("essential")
+                == withdrawal.contains_key("essential_fraction"))
+        {
+            r.error(
+                doc,
+                "strategy \"discretionary-guardrail\" requires exactly one of \
+                 `essential` / `essential_fraction` — the engine never guesses \
+                 a split (§4.5)",
+            );
+        }
     }
 }
 

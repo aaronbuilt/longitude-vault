@@ -1,5 +1,5 @@
 [[override]]
-key = "col.pl.krakow.housing.comfortable"
+key = "col.pl.krakow.housing.comfort"
 value = "4200"
 currency = "PLN"
 note = "actual rent, 2-room Kazimierz, 2026"

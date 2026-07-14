@@ -1,6 +1,6 @@
 # The Longitude Vault Format — Specification v0.1
 
-*Status: v0.1 · rev 6 · 2026-07-05 — published and implemented, not a draft.
+*Status: v0.1 · rev 7 · 2026-07-14 — published and implemented, not a draft.
 The reference CLI implements this spec and the conformance fixtures test it.
 The core documents (`manifest`, `profile`, `accounts`, `snapshots`,
 `scenarios`) and both physical forms (§5) are stable within the v0.x line:
@@ -11,7 +11,12 @@ vocabulary (§3.6, pending the curation pipeline). Additive fields arrive as
 MINOR revisions under the §3.7 ignore-unknown rule and never break an older
 reader.*
 
-*Changelog: rev 6 (2026-07-05) adds a normative §7 bullet
+*Changelog: rev 7 (2026-07-14) documents the optional `[withdrawal]` fields
+used by the `discretionary-guardrail` strategy (`essential` /
+`essential_fraction`, `correction_cut`, `bear_cut` — §4.5) and standardizes
+the lifestyle-tier names to `lean | comfort | premium` (previously
+`lean | comfortable | luxury`; the legacy names remain accepted as aliases
+and readers SHOULD warn). Rev 6 (2026-07-05) adds a normative §7 bullet
 requiring conforming applications to keep decrypted vault contents in memory
 and never persist a plaintext directory as a side effect of normal
 operation; explicit `unpack`-style extraction (§5.3) remains supported. Rev 5
@@ -141,7 +146,7 @@ keys. There are no other cross-references in v0.1.
   (published with the data bundles): `"pl/krakow"`, `"jp/tokyo"`, `"us/detroit"`, `"ge"`.
 - A **world-data key** is a dot path:
   `<domain>.<country>[.<city>].<category>[.<subkey>]` — e.g.
-  `col.pl.krakow.housing.comfortable`, `tax.us.federal.ltcg`, `visa.jp.us-passport.max-stay-days`.
+  `col.pl.krakow.housing.comfort`, `tax.us.federal.ltcg`, `visa.jp.us-passport.max-stay-days`.
   Domains in v0.1: `col`, `tax`, `visa`, `fx`, `climate`, `safety`, `livability`.
   The key registry itself is versioned with the data bundles, not this spec.
 - **Case convention (normative):** everything place-shaped — place strings,
@@ -190,7 +195,9 @@ target_retirement_age = 45
 annual_spending = { amount = "60000", currency = "USD" }
 annual_savings  = { amount = "40000", currency = "USD" }
 swr = "0.040"
-lifestyle = "comfortable"           # lean | comfortable | luxury (default tier)
+lifestyle = "comfort"               # lean | comfort | premium (default tier);
+                                    #   legacy "comfortable"/"luxury" accepted
+                                    #   as aliases, readers SHOULD warn
 display_currency = "USD"            # view preference; ≠ base_currency semantics
 household = 1                       # people covered by this vault's spending
 ```
@@ -303,7 +310,8 @@ place = "us/detroit"
 months_per_year = 3
 
 [expenses]
-lifestyle = "comfortable"           # lean | comfortable | luxury;
+lifestyle = "comfort"               # lean | comfort | premium (legacy
+                                    # "comfortable"/"luxury" = aliases);
                                     # engine prices residency blocks from CoL data
                                     # at this tier, honoring overrides/ (§4.6)
 extra_monthly = { amount = "300", currency = "USD" }   # flat add-on (subscriptions…)
@@ -340,6 +348,16 @@ rate = "0.040"                      # doubles as this scenario's SWR for the
 # percent-with-bounds only — annual clamp on strategy spending, real terms:
 # floor   = { amount = "30000", currency = "USD" }   # Money, optional
 # ceiling = { amount = "80000", currency = "USD" }   # Money, optional
+# discretionary-guardrail only — the essential/discretionary split. Exactly ONE
+# of `essential` (annual Money, real) or `essential_fraction` (decimal string,
+# fraction of the initial withdrawal that is essential) MUST be present for
+# this strategy; the engine refuses to guess a split. The cuts are the
+# fraction of the discretionary budget still withdrawn in each market state
+# (decimal strings in [0, 1]); both optional:
+# essential          = { amount = "20000", currency = "USD" }
+# essential_fraction = "0.50"         # alternative to `essential`
+# correction_cut     = "0.5"          # market 10–20% off highs (default "0.5")
+# bear_cut           = "0.0"          # market >20% off highs (default "0.0")
 
 [tax]
 # Citizenship-driven flags default from profile.passports; scenario may override.
@@ -356,7 +374,7 @@ User corrections to world-data values (their rent, their insurance quote). Filen
 is a user-chosen slug (§3.2 grammar); grouping is free-form.
 ```toml
 [[override]]
-key = "col.pl.krakow.housing.comfortable"   # ◆ world-data key (§3.6)
+key = "col.pl.krakow.housing.comfort"       # ◆ world-data key (§3.6)
 value = "4200"                              # ◆ decimal string
 currency = "PLN"                            # for monetary keys
 note = "actual rent, 2-room Kazimierz, 2026"
@@ -624,13 +642,17 @@ A conforming validator (in the reference CLI: `longitude vault check`) reports:
   recurring residency blocks summing to more than 12 months/year;
   snapshot `balance.account` referencing a nonexistent account id;
   `secured_by` referencing a nonexistent account id, or present on a
-  non-liability account; in container mode, any §5.4 violation (path
+  non-liability account;
+  `[withdrawal] strategy = "discretionary-guardrail"` without exactly one of
+  `essential`/`essential_fraction`, or with `essential_fraction`,
+  `correction_cut`, or `bear_cut` outside [0, 1]; in container mode, any §5.4 violation (path
   traversal, forbidden entry types, duplicate paths, filename-grammar
   violations, resource-limit breach).
 - **Warnings:** allocation weights not summing to ~1; recurring residency blocks
   summing ≠ 12 months/year; a snapshot balance dated after its account's `closed`
   date; overrides of the same key in multiple files (or twice in one file);
-  descriptor present in a plaintext-mode vault; unrecognized top-level directories
+  descriptor present in a plaintext-mode vault; legacy lifestyle-tier alias
+  (`comfortable`/`luxury` for `comfort`/`premium`); unrecognized top-level directories
   (preserved per §5.1); `passports` empty (visa/tax features degrade); vault is
   passphrase-only export mode (§6.4 — no recovery key possible).
 

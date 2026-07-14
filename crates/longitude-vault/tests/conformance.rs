@@ -165,3 +165,69 @@ fn wrong_key_is_refused() {
     );
     assert!(matches!(result, Err(ContainerError::NoMatchingKey)));
 }
+
+/// String-patch one document of a loaded vault (tests only).
+fn patch(vault: &mut longitude_vault::RawVault, path: &str, from: &str, to: &str) {
+    let doc = vault
+        .documents
+        .iter_mut()
+        .find(|d| d.path == path)
+        .unwrap_or_else(|| panic!("no {path} in demo vault"));
+    let text = String::from_utf8(doc.bytes.clone()).unwrap();
+    assert!(text.contains(from), "{path} does not contain {from:?}");
+    doc.bytes = text.replace(from, to).into_bytes();
+}
+
+#[test]
+fn guardrail_without_a_split_is_invalid() {
+    let mut vault = RawVault::load_dir(&fixtures().join("valid/demo.lonvault")).unwrap();
+    patch(
+        &mut vault,
+        "scenarios/stay-home.toml",
+        "strategy = \"constant-dollar\"",
+        "strategy = \"discretionary-guardrail\"",
+    );
+    let report = validate(&vault, Mode::Plaintext);
+    assert!(!report.is_valid(), "{:#?}", report.findings);
+
+    // exactly one split form makes it clean again
+    let mut vault = RawVault::load_dir(&fixtures().join("valid/demo.lonvault")).unwrap();
+    patch(
+        &mut vault,
+        "scenarios/stay-home.toml",
+        "strategy = \"constant-dollar\"",
+        "strategy = \"discretionary-guardrail\"\nessential_fraction = \"0.5\"",
+    );
+    let report = validate(&vault, Mode::Plaintext);
+    assert!(report.findings.is_empty(), "{:#?}", report.findings);
+
+    // a cut outside [0, 1] is an error
+    let mut vault = RawVault::load_dir(&fixtures().join("valid/demo.lonvault")).unwrap();
+    patch(
+        &mut vault,
+        "scenarios/stay-home.toml",
+        "strategy = \"constant-dollar\"",
+        "strategy = \"discretionary-guardrail\"\nessential_fraction = \"0.5\"\nbear_cut = \"1.5\"",
+    );
+    let report = validate(&vault, Mode::Plaintext);
+    assert!(!report.is_valid(), "{:#?}", report.findings);
+}
+
+#[test]
+fn legacy_lifestyle_alias_warns_but_stays_valid() {
+    let mut vault = RawVault::load_dir(&fixtures().join("valid/demo.lonvault")).unwrap();
+    patch(
+        &mut vault,
+        "profile.toml",
+        "lifestyle = \"comfort\"",
+        "lifestyle = \"comfortable\"",
+    );
+    let report = validate(&vault, Mode::Plaintext);
+    assert!(report.is_valid());
+    assert_eq!(report.warning_count(), 1, "{:#?}", report.findings);
+    assert!(
+        format!("{:?}", report.findings).contains("legacy alias"),
+        "{:#?}",
+        report.findings
+    );
+}
