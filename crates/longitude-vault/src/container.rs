@@ -113,8 +113,12 @@ fn map_io(e: io::Error, ceiling: u64) -> ContainerError {
 /// passphrase-only export vault (§6.4) from a standard recipient vault
 /// without attempting decryption.
 pub fn scan_header_stanzas(path: &Path) -> Result<Vec<String>, ContainerError> {
-    let file = BufReader::new(File::open(path)?);
-    let mut lines = file.lines();
+    scan_header_stanzas_from(BufReader::new(File::open(path)?))
+}
+
+/// [`scan_header_stanzas`] over any reader (see [`read_container_from`]).
+pub fn scan_header_stanzas_from<R: BufRead>(reader: R) -> Result<Vec<String>, ContainerError> {
+    let mut lines = reader.lines();
     match lines.next() {
         Some(Ok(first)) if first.trim_end() == "age-encryption.org/v1" => {}
         _ => return Err(ContainerError::NotAge),
@@ -142,7 +146,17 @@ pub fn read_container(
     limits: ReadLimits,
 ) -> Result<RawVault, ContainerError> {
     let file = File::open(path)?;
-    let decryptor = age::Decryptor::new_buffered(BufReader::new(file)).map_err(|e| match e {
+    read_container_from(BufReader::new(file), identities, limits)
+}
+
+/// [`read_container`] over any reader — for callers whose container bytes
+/// never touch a filesystem (a browser passes them across the wasm boundary).
+pub fn read_container_from<R: BufRead>(
+    reader: R,
+    identities: &[Box<dyn age::Identity>],
+    limits: ReadLimits,
+) -> Result<RawVault, ContainerError> {
+    let decryptor = age::Decryptor::new_buffered(reader).map_err(|e| match e {
         age::DecryptError::InvalidHeader => ContainerError::NotAge,
         e => ContainerError::Decrypt(e.to_string()),
     })?;
@@ -339,11 +353,7 @@ pub fn pack(
     recipients: &[Box<dyn age::Recipient + Send>],
     out: &Path,
 ) -> Result<(), ContainerError> {
-    let archive = build_archive(vault)?;
-    let compressed = zstd::stream::encode_all(archive.as_slice(), ZSTD_LEVEL)?;
-
-    let encryptor = age::Encryptor::with_recipients(recipients.iter().map(|r| r.as_ref() as _))
-        .map_err(|e| ContainerError::Encrypt(e.to_string()))?;
+    let bytes = pack_bytes(vault, recipients)?;
 
     let dir = out.parent().unwrap_or_else(|| Path::new("."));
     let tmp = dir.join(format!(
@@ -355,13 +365,9 @@ pub fn pack(
     ));
     let result = (|| -> Result<(), ContainerError> {
         let file = File::create(&tmp)?;
-        let mut writer = encryptor
-            .wrap_output(file)
-            .map_err(|e| ContainerError::Encrypt(e.to_string()))?;
-        writer.write_all(&compressed)?;
-        let file = writer
-            .finish()
-            .map_err(|e| ContainerError::Encrypt(e.to_string()))?;
+        let mut file = io::BufWriter::new(file);
+        file.write_all(&bytes)?;
+        let file = file.into_inner().map_err(io::Error::from)?;
         file.sync_all()?;
         fs::rename(&tmp, out)?;
         Ok(())
@@ -370,6 +376,29 @@ pub fn pack(
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// [`pack`] to bytes — the container as it would be written, for callers
+/// that store it somewhere other than a filesystem path (see
+/// [`read_container_from`]).
+pub fn pack_bytes(
+    vault: &RawVault,
+    recipients: &[Box<dyn age::Recipient + Send>],
+) -> Result<Vec<u8>, ContainerError> {
+    let archive = build_archive(vault)?;
+    let compressed = zstd::stream::encode_all(archive.as_slice(), ZSTD_LEVEL)?;
+
+    let encryptor = age::Encryptor::with_recipients(recipients.iter().map(|r| r.as_ref() as _))
+        .map_err(|e| ContainerError::Encrypt(e.to_string()))?;
+    let mut out = Vec::new();
+    let mut writer = encryptor
+        .wrap_output(&mut out)
+        .map_err(|e| ContainerError::Encrypt(e.to_string()))?;
+    writer.write_all(&compressed)?;
+    writer
+        .finish()
+        .map_err(|e| ContainerError::Encrypt(e.to_string()))?;
+    Ok(out)
 }
 
 /// Write an in-memory vault out as a plaintext-mode directory. Paths are

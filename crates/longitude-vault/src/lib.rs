@@ -13,7 +13,8 @@ pub mod validate;
 pub mod vault;
 
 pub use container::{
-    build_archive, pack, read_container, scan_header_stanzas, ContainerError, ReadLimits,
+    build_archive, pack, pack_bytes, read_container, read_container_from, scan_header_stanzas,
+    scan_header_stanzas_from, ContainerError, ReadLimits,
 };
 pub use report::{Finding, Report, Severity};
 pub use validate::{validate, Mode};
